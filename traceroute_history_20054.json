@@ -1,0 +1,103 @@
+{
+  "status": 1,
+  "message": "Traceroute history details.",
+  "history": [
+    {
+      "query_id": "510a4d3c-2ab2-4165-9351-75ba1a7e8a06",
+      "anchor": "IN-V2-168",
+      "host_name": "zudio.com",
+      "latitude": "12.880072393531309",
+      "longitude": "77.54439814445801",
+      "location": "Bengaluru",
+      "traceroute_data": [
+        {
+          "avg_rtt": 0.435,
+          "distance": "1",
+          "latitude": "12.880072393531309",
+          "location": "Bengaluru",
+          "longitude": "77.54439814445801",
+          "max_rtt": 0.449,
+          "min_rtt": 0.422,
+          "node": "192.168.0.1"
+        },
+        {
+          "avg_rtt": 23.159,
+          "distance": "6",
+          "latitude": "12.98275",
+          "location": "Bengaluru",
+          "longitude": "77.55944",
+          "max_rtt": 23.266,
+          "min_rtt": 23.051,
+          "node": "49.205.72.39"
+        },
+        {
+          "avg_rtt": 23.469,
+          "distance": "7",
+          "latitude": "17.38500",
+          "location": "Hyderabad",
+          "longitude": "78.48670",
+          "max_rtt": 23.545,
+          "min_rtt": 23.393,
+          "node": "103.16.203.73"
+        },
+        {
+          "avg_rtt": 18.594,
+          "distance": "8",
+          "latitude": "13.08362",
+          "location": "Chennai",
+          "longitude": "80.28252",
+          "max_rtt": 21.282,
+          "min_rtt": 15.905,
+          "node": "162.158.52.19"
+        },
+        {
+          "avg_rtt": 15.738,
+          "distance": "9",
+          "latitude": "45.41898",
+          "location": "Ottawa",
+          "longitude": "-75.69651",
+          "max_rtt": 15.794,
+          "min_rtt": 15.681,
+          "node": "23.227.38.65"
+        }
+      ],
+      "map_data": [
+        {
+          "ip": "192.168.0.1",
+          "latitude": "12.880072393531309",
+          "longitude": "77.54439814445801",
+          "location": "Bengaluru",
+          "distance": 1
+        },
+        {
+          "ip": "49.205.72.39",
+          "latitude": "12.98275",
+          "longitude": "77.55944",
+          "location": "Bengaluru",
+          "distance": 2
+        },
+        {
+          "ip": "103.16.203.73",
+          "latitude": "17.38500",
+          "longitude": "78.48670",
+          "location": "Hyderabad",
+          "distance": 3
+        },
+        {
+          "ip": "162.158.52.19",
+          "latitude": "13.08362",
+          "longitude": "80.28252",
+          "location": "Chennai",
+          "distance": 4
+        },
+        {
+          "ip": "23.227.38.65",
+          "latitude": "45.41898",
+          "longitude": "-75.69651",
+          "location": "Ottawa",
+          "distance": 5
+        }
+      ]
+    }
+  ]
+}

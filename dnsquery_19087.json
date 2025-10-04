@@ -1,0 +1,192 @@
+{
+  "dnsq_id": "4d8838e4-0990-4562-b304-638ca2f5c985",
+  "timestamp": "2025-09-15T16:20:24",
+  "query_type": "A",
+  "root_data": {
+    "error": {},
+    "servers": [
+      {
+        "a.root-servers.net": {
+          "ip": "198.41.0.4",
+          "query_time": 0.21545100212097168,
+          "is_authority": true
+        }
+      },
+      {
+        "b.root-servers.net": {
+          "ip": "199.9.14.201",
+          "query_time": 0.04810786247253418,
+          "is_authority": true
+        }
+      },
+      {
+        "c.root-servers.net": {
+          "ip": "192.33.4.12",
+          "query_time": 0.048053741455078125,
+          "is_authority": true
+        }
+      },
+      {
+        "d.root-servers.net": {
+          "ip": "199.7.91.13",
+          "query_time": 0.2481980323791504,
+          "is_authority": true
+        }
+      },
+      {
+        "e.root-servers.net": {
+          "ip": "192.203.230.10",
+          "query_time": 0.01663351058959961,
+          "is_authority": true
+        }
+      },
+      {
+        "f.root-servers.net": {
+          "ip": "192.5.5.241",
+          "query_time": 0.01649641990661621,
+          "is_authority": true
+        }
+      },
+      {
+        "g.root-servers.net": {
+          "ip": "192.112.36.4",
+          "query_time": 0.11525249481201172,
+          "is_authority": true
+        }
+      },
+      {
+        "h.root-servers.net": {
+          "ip": "198.97.190.53",
+          "query_time": 0.2549746036529541,
+          "is_authority": true
+        }
+      },
+      {
+        "i.root-servers.net": {
+          "ip": "192.36.148.17",
+          "query_time": 0.05299258232116699,
+          "is_authority": true
+        }
+      },
+      {
+        "j.root-servers.net": {
+          "ip": "192.58.128.30",
+          "query_time": 0.061180830001831055,
+          "is_authority": true
+        }
+      },
+      {
+        "k.root-servers.net": {
+          "ip": "193.0.14.129",
+          "query_time": 0.02607131004333496,
+          "is_authority": true
+        }
+      },
+      {
+        "l.root-servers.net": {
+          "ip": "199.7.83.42",
+          "query_time": 0.030484676361083984,
+          "is_authority": true
+        }
+      },
+      {
+        "m.root-servers.net": {
+          "ip": "202.12.27.33",
+          "query_time": 0.029568195343017578,
+          "is_authority": true
+        }
+      }
+    ],
+    "authority": [
+      "ns01.trs-dns.com.",
+      "ns01.trs-dns.net.",
+      "ns10.trs-dns.info.",
+      "ns10.trs-dns.org."
+    ]
+  },
+  "domain_data": {
+    "error": {},
+    "answer": [
+      "199.59.243.228"
+    ],
+    "servers": [
+      {
+        "ns1.bodis.com.": {
+          "ip": "199.59.243.110",
+          "rtd": null,
+          "rtt": 0.2207787036895752,
+          "type": "v4",
+          "rtd_ms": null,
+          "rtt_ms": 220.7787036895752,
+          "server": null,
+          "is_answer": true,
+          "server_ms": null,
+          "query_time": 0.2207787036895752
+        }
+      },
+      {
+        "ns2.bodis.com.": {
+          "ip": "34.48.46.38",
+          "rtd": null,
+          "rtt": 0.23867034912109375,
+          "type": "v4",
+          "answer": [
+            "199.59.243.228"
+          ],
+          "rtd_ms": null,
+          "rtt_ms": 238.67034912109375,
+          "server": null,
+          "is_answer": false,
+          "server_ms": null,
+          "query_time": 0.23867034912109375
+        }
+      }
+    ]
+  },
+  "target_name": "sbi.com.in",
+  "tld_data": {
+    "error": {},
+    "servers": [
+      {
+        "ns10.trs-dns.org.": {
+          "ip": "64.78.205.1",
+          "query_time": 0.23351001739501953,
+          "is_authority": true
+        }
+      },
+      {
+        "ns01.trs-dns.com.": {
+          "ip": "64.96.1.1",
+          "query_time": 0.010605812072753906,
+          "is_authority": true
+        }
+      },
+      {
+        "ns10.trs-dns.info.": {
+          "ip": "64.78.204.1",
+          "query_time": 0.23377060890197754,
+          "is_authority": true
+        }
+      },
+      {
+        "ns01.trs-dns.net.": {
+          "ip": "64.96.2.1",
+          "query_time": 0.011675119400024414,
+          "is_authority": true
+        }
+      }
+    ],
+    "authority": [
+      "ns1.bodis.com.",
+      "ns2.bodis.com."
+    ],
+    "authority_error": {
+      "ns1.bodis.com.": {
+        "error": "record not found"
+      },
+      "ns2.bodis.com.": {
+        "error": "record not found"
+      }
+    }
+  }
+}

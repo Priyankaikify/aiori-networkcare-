@@ -1,0 +1,16 @@
+{
+  "status": 1,
+  "message": "Traceroute history details.",
+  "history": [
+    {
+      "query_id": "b7a898c8-fbff-47be-9f15-03d92126f2b2",
+      "anchor": "IN-V2-168",
+      "host_name": "portal.aiori.in",
+      "latitude": "12.880072393531309",
+      "longitude": "77.54439814445801",
+      "location": "Bengaluru",
+      "traceroute_data": [],
+      "map_data": []
+    }
+  ]
+}

@@ -1,0 +1,260 @@
+{
+  "timestamp": "2025-10-04T09:19:07",
+  "dnsq_id": "395991b6-9151-4021-8714-254d4e451144",
+  "query_type": "A",
+  "root_data": {
+    "error": {},
+    "servers": [
+      {
+        "a.root-servers.net": {
+          "ip": "198.41.0.4",
+          "query_time": 0.2427976131439209,
+          "is_authority": true
+        }
+      },
+      {
+        "b.root-servers.net": {
+          "ip": "199.9.14.201",
+          "query_time": 0.05782270431518555,
+          "is_authority": true
+        }
+      },
+      {
+        "c.root-servers.net": {
+          "ip": "192.33.4.12",
+          "query_time": 0.05829763412475586,
+          "is_authority": true
+        }
+      },
+      {
+        "d.root-servers.net": {
+          "ip": "199.7.91.13",
+          "query_time": 0.05692267417907715,
+          "is_authority": true
+        }
+      },
+      {
+        "e.root-servers.net": {
+          "ip": "192.203.230.10",
+          "query_time": 0.03368878364562988,
+          "is_authority": true
+        }
+      },
+      {
+        "f.root-servers.net": {
+          "ip": "192.5.5.241",
+          "query_time": 0.03353738784790039,
+          "is_authority": true
+        }
+      },
+      {
+        "g.root-servers.net": {
+          "ip": "192.112.36.4",
+          "query_time": 0.1236271858215332,
+          "is_authority": true
+        }
+      },
+      {
+        "h.root-servers.net": {
+          "ip": "198.97.190.53",
+          "query_time": 0.26526832580566406,
+          "is_authority": true
+        }
+      },
+      {
+        "i.root-servers.net": {
+          "ip": "192.36.148.17",
+          "query_time": 0.0663309097290039,
+          "is_authority": true
+        }
+      },
+      {
+        "j.root-servers.net": {
+          "ip": "192.58.128.30",
+          "query_time": 0.06617283821105957,
+          "is_authority": true
+        }
+      },
+      {
+        "k.root-servers.net": {
+          "ip": "193.0.14.129",
+          "query_time": 0.03572201728820801,
+          "is_authority": true
+        }
+      },
+      {
+        "l.root-servers.net": {
+          "ip": "199.7.83.42",
+          "query_time": 0.038512468338012695,
+          "is_authority": true
+        }
+      },
+      {
+        "m.root-servers.net": {
+          "ip": "202.12.27.33",
+          "query_time": 0.03953099250793457,
+          "is_authority": true
+        }
+      }
+    ],
+    "authority": [
+      "a.gtld-servers.net.",
+      "b.gtld-servers.net.",
+      "c.gtld-servers.net.",
+      "d.gtld-servers.net.",
+      "e.gtld-servers.net.",
+      "f.gtld-servers.net.",
+      "g.gtld-servers.net.",
+      "h.gtld-servers.net.",
+      "i.gtld-servers.net.",
+      "j.gtld-servers.net.",
+      "k.gtld-servers.net.",
+      "l.gtld-servers.net.",
+      "m.gtld-servers.net."
+    ]
+  },
+  "domain_data": {
+    "error": {
+      "ns45.domaincontrol.com.": {
+        "error": "No response.: Unknown Exception for Nameserver ns45.domaincontrol.com. 2603:5:2162::17. "
+      },
+      "ns46.domaincontrol.com.": {
+        "error": "No response.: Unknown Exception for Nameserver ns46.domaincontrol.com. 2603:5:2262::17. "
+      }
+    },
+    "answer": [
+      "23.227.38.65"
+    ],
+    "servers": [
+      {
+        "ns45.domaincontrol.com.": {
+          "ip": "97.74.102.23",
+          "rtd": null,
+          "rtt": 0.04297018051147461,
+          "type": "v4",
+          "rtd_ms": null,
+          "rtt_ms": 42.97018051147461,
+          "server": null,
+          "is_answer": true,
+          "server_ms": null,
+          "query_time": 0.04297018051147461
+        }
+      },
+      {
+        "ns46.domaincontrol.com.": {
+          "ip": "173.201.70.23",
+          "rtd": null,
+          "rtt": 0.04230070114135742,
+          "type": "v4",
+          "answer": [
+            "23.227.38.65"
+          ],
+          "rtd_ms": null,
+          "rtt_ms": 42.30070114135742,
+          "server": null,
+          "is_answer": false,
+          "server_ms": null,
+          "query_time": 0.04230070114135742
+        }
+      }
+    ]
+  },
+  "target_name": "zudio.com",
+  "tld_data": {
+    "error": {
+      "e.gtld-servers.net.": {
+        "error": "The DNS operation timed out"
+      }
+    },
+    "servers": [
+      {
+        "l.gtld-servers.net.": {
+          "ip": "192.41.162.30",
+          "query_time": 0.212846040725708,
+          "is_authority": true
+        }
+      },
+      {
+        "j.gtld-servers.net.": {
+          "ip": "192.48.79.30",
+          "query_time": 0.2190554141998291,
+          "is_authority": true
+        }
+      },
+      {
+        "h.gtld-servers.net.": {
+          "ip": "192.54.112.30",
+          "query_time": 0.2411205768585205,
+          "is_authority": true
+        }
+      },
+      {
+        "d.gtld-servers.net.": {
+          "ip": "192.31.80.30",
+          "query_time": 0.28705358505249023,
+          "is_authority": true
+        }
+      },
+      {
+        "b.gtld-servers.net.": {
+          "ip": "192.33.14.30",
+          "query_time": 0.05527138710021973,
+          "is_authority": true
+        }
+      },
+      {
+        "f.gtld-servers.net.": {
+          "ip": "192.35.51.30",
+          "query_time": 0.22817230224609375,
+          "is_authority": true
+        }
+      },
+      {
+        "m.gtld-servers.net.": {
+          "ip": "192.55.83.30",
+          "query_time": 0.21099233627319336,
+          "is_authority": true
+        }
+      },
+      {
+        "k.gtld-servers.net.": {
+          "ip": "192.52.178.30",
+          "query_time": 0.21254634857177734,
+          "is_authority": true
+        }
+      },
+      {
+        "i.gtld-servers.net.": {
+          "ip": "192.43.172.30",
+          "query_time": 0.22871756553649902,
+          "is_authority": true
+        }
+      },
+      {
+        "g.gtld-servers.net.": {
+          "ip": "192.42.93.30",
+          "query_time": 0.23955345153808594,
+          "is_authority": true
+        }
+      },
+      {
+        "c.gtld-servers.net.": {
+          "ip": "192.26.92.30",
+          "query_time": 0.3045966625213623,
+          "is_authority": true
+        }
+      },
+      {
+        "a.gtld-servers.net.": {
+          "ip": "192.5.6.30",
+          "query_time": 0.12916803359985352,
+          "is_authority": true
+        }
+      }
+    ],
+    "authority": [
+      "ns45.domaincontrol.com.",
+      "ns46.domaincontrol.com."
+    ]
+  }
+}

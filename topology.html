@@ -1,0 +1,641 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>LEO Satellite Tracker + Ground Markers + Routing (A*/Dijkstra)</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    html, body { height: 100%; margin: 0; font-family: Arial, sans-serif; }
+    #map { height: 65vh; width: 100%; }
+    #controls { margin: 10px; text-align: center; }
+    table { border-collapse: collapse; width: 90%; margin: 15px auto; font-size:13px; }
+    th, td { border: 1px solid #ccc; padding: 4px; text-align: center; }
+    th { background: #f4f4f4; }
+    button, input[type=checkbox], input[type=file], select, input[type=text] { margin: 4px; padding: 6px 8px; }
+    .section-title { text-align: center; font-weight: bold; margin-top: 20px; }
+    .node-label {
+      background:white; border:2px solid black; color:black; font-weight:bold;
+      border-radius:50%; width:24px; height:24px; display:flex;
+      align-items:center; justify-content:center; font-size:13px;
+    }
+    #latency-control {
+      position: fixed;
+      top: 80px;
+      right: 20px;
+      z-index: 9999;
+      background: rgba(255, 255, 255, 0.98);
+      padding: 12px 14px;
+      border-radius: 10px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+      width: 360px;
+      font-family: Arial, sans-serif;
+      font-size: 13px;
+    }
+    #latency-control h4 { margin: 0 0 8px 0; text-align:center; }
+    #latency-control .slider-group { margin-bottom: 8px; }
+    #latency-control label { display:block; margin-bottom:4px; }
+    #latency-control input[type="range"] { width: 100%; }
+    #latency-control .small { font-size:12px; color:#333; }
+    #coordInputs { margin-top: 8px; text-align:left; font-size:13px; }
+    #coordInputs input { width: 130px; }
+  </style>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/satellite.js/dist/satellite.min.js"></script>
+</head>
+<body>
+  <div id="map"></div>
+
+  <div id="controls">
+    <button id="clearMarkers"> Clear Blue Markers</button>
+    <input type="file" id="tleFile" accept=".txt" />
+    <button id="loadFromFile"> Load TLE from File</button>
+    <button id="toggleSatellites"> Toggle Satellites</button>
+    <button id="downloadCsv"> Download CSV</button>
+    <label><input type="checkbox" id="latencySwitch">  Enable Latency Calculation</label>
+    <p id="status">Status: Ready. (Use file input to select your TLE file.)</p>
+  </div>
+
+  <table id="satTable">
+    <thead>
+      <tr><th>#</th><th>Name</th><th>Latitude</th><th>Longitude</th><th>Altitude (km)</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <h3 class="section-title"> Table 1: Overall Instantaneous Latency (All Satellites & Ground Points)</h3>
+  <table id="overallLatency">
+    <thead><tr><th>Satellite Name</th><th>Nearest Ground Station</th><th>Distance (km)</th><th>Latency (ms)</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <h3 class="section-title"> Table 2: Inter-Nodal (A ↔ B) Latency</h3>
+  <table id="nodeLatency">
+    <thead><tr><th>Node A</th><th>Node B</th><th>Distance (km)</th><th>Latency (ms)</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <h3 class="section-title"> Table 3: Ground ↔ Satellite Latency Summary</h3>
+  <table id="groundSatSummary">
+    <thead><tr><th>Ground Station</th><th>Nearest Satellite</th><th>Distance (km)</th><th>Latency (ms)</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <h3 class="section-title"> Table 4: Routing Report (A* / Dijkstra)</h3>
+  <table id="routingReport">
+    <thead><tr><th>Algorithm</th><th>Path (Nodes)</th><th>Total Distance (km)</th><th>Latency (ms)</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <!-- === Latency Control Panel + Routing === -->
+  <div id="latency-control" aria-live="polite">
+    <h4>Latency Control Panel</h4>
+
+    <div class="slider-group">
+      <label>Processing Delay: <span id="procVal">0</span> ms</label>
+      <input type="range" min="0" max="500" value="0" step="1" id="procDelay">
+    </div>
+
+    <div class="slider-group">
+      <label>Transmission Delay: <span id="transVal">0</span> ms</label>
+      <input type="range" min="0" max="500" value="0" step="1" id="transDelay">
+    </div>
+
+    <div class="slider-group">
+      <label>Queuing Delay: <span id="queueVal">0</span> ms</label>
+      <input type="range" min="0" max="500" value="0" step="1" id="queueDelay">
+    </div>
+
+    <div class="slider-group">
+      <label>ISL Delay: <span id="islVal">0</span> ms</label>
+      <input type="range" min="0" max="500" value="0" step="1" id="islDelay">
+    </div>
+
+    <div class="slider-group">
+      <label>Overhead Delay: <span id="overVal">0</span> ms</label>
+      <input type="range" min="0" max="500" value="0" step="1" id="overDelay">
+    </div>
+
+    <hr style="margin:8px 0;">
+    <div><strong>Total Added Latency:</strong> <span id="totalAdded">0</span> ms</div>
+    <div class="small" style="margin-top:6px;">(Adds to displayed latency values; propagation calculations are unchanged.)</div>
+
+    <!-- Coordinates quick set -->
+    <div id="coordInputs">
+      <div style="margin-top:8px;"><strong>Set custom coordinates for Node A / Node B</strong></div>
+      <div style="margin-top:6px;">
+        A: <input id="coordA" type="text" placeholder="lat, lon" /> 
+        B: <input id="coordB" type="text" placeholder="lat, lon" />
+        <button id="setCoords">Set</button>
+             </div>
+      <div style="margin-top:6px;">
+        <label><input type="checkbox" id="enableAlgo">  Enable Algorithm Routing</label><br>
+        <label>Algorithm:
+          <select id="algoType">
+            <option value="aStar">A*</option>
+            <option value="dijkstra">Dijkstra</option>
+          </select>
+        </label>
+        <button id="runRouting"> Run Routing (A↔B)</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // --- Map setup ---
+    const map = L.map("map").setView([0, 0], 2);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 8, attribution: "&copy; OpenStreetMap"
+    }).addTo(map);
+
+    // Layers
+    const referenceLayer = L.layerGroup().addTo(map); // blue click markers
+    const satelliteLayer = L.layerGroup().addTo(map); // green satellites
+    const stationsLayer = L.layerGroup().addTo(map);  // red ground stations
+    let satellitesVisible = true;
+
+    const c = 299792.458; // km/s
+
+    // global satellites array (will be filled by processTLE)
+    let satPositions = []; // {name, lat, lon, alt}
+    let routingLine = null;
+
+    // Node A & B persistence (draggable markers)
+    let nodePositions = JSON.parse(localStorage.getItem("nodes") || '{"A":[10,10],"B":[-10,-10]}');
+    let abLine = null;
+    function createNode(name, latlng) {
+      const marker = L.marker(latlng, {
+        draggable: true,
+        icon: L.divIcon({className: "node-label",html: `${name}`, iconSize: [24, 24]})
+      }).addTo(map);
+
+      marker.on("dragend", e => {
+        const pos = e.target.getLatLng();
+        nodePositions[name] = [pos.lat, pos.lng];
+        localStorage.setItem("nodes", JSON.stringify(nodePositions));
+        if (latencyEnabled) calculateNodeLatencyLive();
+      });
+      return marker;
+    }
+
+    const nodeA = createNode("A", nodePositions.A);
+    const nodeB = createNode("B", nodePositions.B);
+
+    function updateNodeMarkersFromPositions() {
+      nodeA.setLatLng(nodePositions.A);
+      nodeB.setLatLng(nodePositions.B);
+      calculateNodeLatencyLive();
+    }
+
+    // calculate and display A<->B direct distance/latency
+    function calculateNodeLatencyLive() {
+      const [latA, lonA] = nodePositions.A;
+      const [latB, lonB] = nodePositions.B;
+      const d = haversine(latA, lonA, latB, lonB);
+      const latencyMs = (d / c) * 1000;
+      document.querySelector("#nodeLatency tbody").innerHTML =
+        <tr><td>A</td><td>B</td><td>${d.toFixed(2)}</td><td>${latencyMs.toFixed(3)} ms</td></tr>;
+      if (abLine) map.removeLayer(abLine);
+      abLine = L.polyline([[latA, lonA], [latB, lonB]], { color: "orange", weight: 2, dashArray: "5,5" }).addTo(map);
+      localStorage.setItem("nodeLatency", JSON.stringify({ d, latencyMs }));
+    }
+    if (localStorage.getItem("nodeLatency")) calculateNodeLatencyLive();
+
+    // map click to add blue markers
+    map.on("click", e => {
+      L.circleMarker(e.latlng, { radius: 5, color: "blue", fillColor: "blue", fillOpacity: 1 }).addTo(referenceLayer);
+    });
+    document.getElementById("clearMarkers").onclick = () => referenceLayer.clearLayers();
+
+    // toggle satellites
+    document.getElementById("toggleSatellites").onclick = () => {
+      satellitesVisible = !satellitesVisible;
+      satellitesVisible ? satelliteLayer.addTo(map) : map.removeLayer(satelliteLayer);
+    };
+
+    // Load TLE from local file using file input (browser requires user selection)
+    document.getElementById("loadFromFile").onclick = () => {
+      const fileInput = document.getElementById("tleFile");
+      const file = fileInput.files[0];
+      if (!file) {
+        alert("Please select your TLE file first using the file input (choose your saved file).");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const text = event.target.result;
+        processTLE(text);
+      };
+      reader.readAsText(file);
+    };
+
+    // --- Main TLE processing (fills global satPositions) ---
+    function processTLE(text) {
+      const status = document.getElementById("status");
+      const tableBody = document.querySelector("#satTable tbody");
+      const latencyTable = document.querySelector("#overallLatency tbody");
+      const groundSatSummary = document.querySelector("#groundSatSummary tbody");
+
+      tableBody.innerHTML = "";
+      latencyTable.innerHTML = "";
+      groundSatSummary.innerHTML = "";
+      satelliteLayer.clearLayers();
+      satPositions = []; // reset global
+
+      status.textContent = "Processing local TLE data...";
+      const lines = text.trim().split(/\r?\n/);
+      const now = new Date();
+      let count = 0;
+      const maxSatellites = 200; // allow more if needed, but UI earlier used 50
+      for (let i = 0; i < lines.length; i += 3) {
+        if (count >= maxSatellites) break;
+        const name = (lines[i] || "").trim(), l1 = (lines[i + 1] || "").trim(), l2 = (lines[i + 2] || "").trim();
+        if (!l1 || !l2 || !name) continue;
+        try {
+          const satrec = window.satellite.twoline2satrec(l1, l2);
+          const pv = window.satellite.propagate(satrec, now);
+          if (!pv.position) continue;
+          const gmst = window.satellite.gstime(now);
+          const geo = window.satellite.eciToGeodetic(pv.position, gmst);
+          const lat = window.satellite.degreesLat(geo.latitude);
+          const lon = window.satellite.degreesLong(geo.longitude);
+          const alt = geo.height;
+          satPositions.push({ name, lat, lon, alt });
+          L.circleMarker([lat, lon], { radius: 3, color: "darkgreen", fillColor: "darkgreen", fillOpacity: 1 }).addTo(satelliteLayer);
+          tableBody.insertAdjacentHTML("beforeend",'<tr><td>${count+1}</td><td>${name}</td><td>${lat.toFixed(2)}</td><td>${lon.toFixed(2)}</td><td>${alt.toFixed(2)}</td></tr>');
+          count++;
+        } catch (err) {
+          // skip invalid TLE chunk
+          continue;
+        }
+      }
+
+      computeOverallLatency(satPositions, latencyTable, groundSatSummary);
+      annotateLatencyTables();
+      computeExtraLatency();
+
+      status.textContent = `Loaded ${satPositions.length} satellites from local file.`;
+    }
+
+    // download CSV
+    document.getElementById("downloadCsv").onclick = () => {
+      const rows = [["#", "Name", "Latitude", "Longitude", "Altitude (km)"]];
+      document.querySelectorAll("#satTable tbody tr").forEach(tr => rows.push([...tr.children].map(td => td.textContent)));
+      const csv = rows.map(r => r.join(",")).join("\n");
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+      a.download = "satellites.csv";
+      a.click();
+    };
+
+    // Ground stations (fixed red markers)
+    const stations = [
+      { name: "North Bend, WA", lat: 47.482, lng: -121.761 },
+      { name: "Conrad, MT", lat: 48.118, lng: -111.979 },
+      { name: "Elwood, NE", lat: 40.856, lng: -99.967 },
+      { name: "Merrillan, WI", lat: 44.385, lng: -90.793 },
+      { name: "Hawthorne, CA", lat: 33.921, lng: -118.327 },
+      { name: "Marathon, ON", lat: 49.33, lng: -86.208 },
+      { name: "St Johns, NL", lat: 47.53, lng: -52.793 },
+      { name: "Akita, Japan", lat: 39.718, lng: 140.088 },
+      { name: "Angeles, Philippines", lat: 15.15, lng: 120.59 },
+      { name: "Cabo San Lucas, Mexico", lat: 22.89, lng: -109.84 }
+    ];
+    stations.forEach(s => L.circleMarker([s.lat, s.lng], { radius: 5, color: "red", fillColor: "red", fillOpacity: 1 }).addTo(stationsLayer));
+
+    // haversine
+    function haversine(lat1, lon1, lat2, lon2) {
+      const R = 6371;
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+      return 2 * R * Math.asin(Math.sqrt(a));
+    }
+
+    // compute latencies for overall and ground-sat summary
+    function computeOverallLatency(satPositionsLocal, latencyTable, groundSatSummary) {
+      // ground->nearest satellite
+      groundSatSummary.innerHTML = "";
+      stations.forEach(st => {
+        let nearestSat = null, minDist = Infinity;
+        satPositionsLocal.forEach(sat => {
+          const d = haversine(st.lat, st.lng, sat.lat, sat.lon);
+          if (d < minDist) { minDist = d; nearestSat = sat; }
+        });
+        const latencyMs = (minDist / c) * 1000;
+        groundSatSummary.insertAdjacentHTML("beforeend", <tr><td>${st.name}</td><td>${nearestSat ? nearestSat.name : "-"}</td><td>${minDist===Infinity?'-':minDist.toFixed(2)}</td><td>${minDist===Infinity?'-':latencyMs.toFixed(3)}</td></tr>);
+      });
+
+      // satellite -> nearest ground
+      latencyTable.innerHTML = "";
+      satPositionsLocal.forEach(sat => {
+        let nearestGround = null, minDist = Infinity;
+        stations.forEach(st => {
+          const d = haversine(sat.lat, sat.lon, st.lat, st.lng);
+          if (d < minDist) { minDist = d; nearestGround = st; }
+        });
+        const latencyMs = (minDist / c) * 1000;
+        latencyTable.insertAdjacentHTML("beforeend", <tr><td>${sat.name}</td><td>${nearestGround ? nearestGround.name : '-'}</td><td>${minDist===Infinity?'-':minDist.toFixed(2)}</td><td>${minDist===Infinity?'-':latencyMs.toFixed(3)} ms</td></tr>);
+      });
+    }
+
+    /* ===================
+       Latency Slider Logic (non-invasive)
+       =================== */
+    const sliders = {
+      proc: document.getElementById("procDelay"),
+      trans: document.getElementById("transDelay"),
+      queue: document.getElementById("queueDelay"),
+      isl: document.getElementById("islDelay"),
+      over: document.getElementById("overDelay")
+    };
+    const displayVals = {
+      proc: document.getElementById("procVal"),
+      trans: document.getElementById("transVal"),
+      queue: document.getElementById("queueVal"),
+      isl: document.getElementById("islVal"),
+      over: document.getElementById("overVal"),
+      total: document.getElementById("totalAdded")
+    };
+
+    let totalExtraLatency = 0;
+    function computeExtraLatency() {
+      totalExtraLatency =
+        parseInt(sliders.proc.value || 0) +
+        parseInt(sliders.trans.value || 0) +
+        parseInt(sliders.queue.value || 0) +
+        parseInt(sliders.isl.value || 0) +
+        parseInt(sliders.over.value || 0);
+
+      displayVals.proc.textContent = sliders.proc.value;
+      displayVals.trans.textContent = sliders.trans.value;
+      displayVals.queue.textContent = sliders.queue.value;
+      displayVals.isl.textContent = sliders.isl.value;
+      displayVals.over.textContent = sliders.over.value;
+      displayVals.total.textContent = totalExtraLatency;
+
+      applyExtraLatencyToAll();
+    }
+    Object.values(sliders).forEach(s => s.addEventListener("input", computeExtraLatency));
+
+    function annotateLatencyTables() {
+      ["#overallLatency tbody", "#groundSatSummary tbody"].forEach(sel => {
+        const tbody = document.querySelector(sel);
+        if (!tbody) return;
+        Array.from(tbody.rows).forEach(r => {
+          const latencyCell = r.cells[3];
+          if (!latencyCell) return;
+          const val = parseFloat((latencyCell.innerText || "").replace(/[^\d.\-]/g, ""));
+          if (!isNaN(val)) {
+            latencyCell.dataset.baseLatency = val.toString();
+            latencyCell.innerText = (val + totalExtraLatency).toFixed(3) + " ms";
+          }
+        });
+      });
+    }
+
+    function applyExtraLatencyToAll() {
+      ["#overallLatency tbody", "#groundSatSummary tbody"].forEach(sel => {
+        const tbody = document.querySelector(sel);
+        if (!tbody) return;
+        Array.from(tbody.rows).forEach(r => {
+          const latencyCell = r.cells[3];
+          if (!latencyCell) return;
+          let base = parseFloat(latencyCell.dataset.baseLatency);
+          if (isNaN(base)) {
+            const p = parseFloat((latencyCell.innerText || "").replace(/[^\d.\-]/g, ""));
+            base = isNaN(p) ? 0 : p;
+            latencyCell.dataset.baseLatency = base.toString();
+          }
+          latencyCell.innerText = (base + totalExtraLatency).toFixed(3) + " ms";
+        });
+      });
+
+      // nodeLatency (A <-> B)
+      const nodeTbody = document.querySelector("#nodeLatency tbody");
+      if (nodeTbody && nodeTbody.rows.length) {
+        Array.from(nodeTbody.rows).forEach(r => {
+          const latencyCell = r.cells[3];
+          if (!latencyCell) return;
+          let base = parseFloat(latencyCell.dataset.baseLatency);
+          if (isNaN(base)) {
+            const p = parseFloat((latencyCell.innerText || "").replace(/[^\d.\-]/g, ""));
+            base = isNaN(p) ? 0 : p;
+            latencyCell.dataset.baseLatency = base.toString();
+          }
+          latencyCell.innerText = (base + totalExtraLatency).toFixed(3) + " ms";
+        });
+      }
+    }
+
+    // Observe nodeLatency tbody for direct writes
+    (function observeNodeLatency() {
+      const nodeTbody = document.querySelector("#nodeLatency tbody");
+      if (!nodeTbody) return;
+      const mo = new MutationObserver(muts => {
+        muts.forEach(m => {
+          if (m.type === "childList" && m.addedNodes.length) {
+            Array.from(nodeTbody.rows).forEach(r => {
+              const latencyCell = r.cells[3];
+              if (!latencyCell) return;
+              const raw = parseFloat((latencyCell.innerText || "").replace(/[^\d.\-]/g, ""));
+              if (!isNaN(raw)) {
+                latencyCell.dataset.baseLatency = raw.toString();
+                latencyCell.innerText = (raw + totalExtraLatency).toFixed(3) + " ms";
+              }
+            });
+          }
+        });
+      });
+      mo.observe(nodeTbody, { childList: true, subtree: false });
+    })();
+
+    setTimeout(() => {
+      annotateLatencyTables();
+      computeExtraLatency();
+    }, 50);
+
+    /* ===================
+       Routing (Graph + Dijkstra + A*)
+       =================== */
+    function buildGraph() {
+      const graph = {};
+      const maxDist = 8000; // km (ISL range) - adjust if needed
+      satPositions.forEach((s1, i) => {
+        graph[s1.name] = [];
+      });
+      for (let i = 0; i < satPositions.length; i++) {
+        for (let j = 0; j < satPositions.length; j++) {
+          if (i === j) continue;
+          const s1 = satPositions[i], s2 = satPositions[j];
+          const d = haversine(s1.lat, s1.lon, s2.lat, s2.lon);
+          if (d <= maxDist) graph[s1.name].push({ node: s2.name, dist: d });
+        }
+      }
+      return graph;
+    }
+
+    function dijkstra(graph, start, goal) {
+      if (!graph[start] || !graph[goal]) return { path: [], distance: Infinity };
+      const distances = {}, prev = {}, visited = new Set();
+      Object.keys(graph).forEach(n => distances[n] = Infinity);
+      distances[start] = 0;
+      while (true) {
+        // pick unvisited node with smallest distance
+        let u = null, best = Infinity;
+        for (const n of Object.keys(graph)) {
+          if (!visited.has(n) && distances[n] < best) { best = distances[n]; u = n; }
+        }
+        if (u === null) break;
+        if (u === goal) break;
+        visited.add(u);
+        for (const edge of graph[u]) {
+          const alt = distances[u] + edge.dist;
+          if (alt < distances[edge.node]) {
+            distances[edge.node] = alt;
+            prev[edge.node] = u;
+          }
+        }
+      }
+      const path = [];
+      let cur = goal;
+      if (distances[goal] === Infinity) return { path: [], distance: Infinity };
+      while (cur) { path.unshift(cur); cur = prev[cur]; }
+      return { path, distance: distances[goal] };
+    }
+
+    function aStar(graph, start, goal, satMap) {
+      if (!graph[start] || !graph[goal]) return { path: [], distance: Infinity };
+      const open = new Set([start]), cameFrom = {}, g = {}, f = {};
+      Object.keys(graph).forEach(n => { g[n] = Infinity; f[n] = Infinity; });
+      g[start] = 0;
+      f[start] = heuristic(start, goal, satMap);
+      while (open.size) {
+        let curr = null, best = Infinity;
+        for (const n of open) {
+          if (f[n] < best) { best = f[n]; curr = n; }
+        }
+        if (!curr) break;
+        if (curr === goal) break;
+        open.delete(curr);
+        for (const edge of graph[curr]) {
+          const tentative = g[curr] + edge.dist;
+          if (tentative < g[edge.node]) {
+            cameFrom[edge.node] = curr;
+            g[edge.node] = tentative;
+            f[edge.node] = g[edge.node] + heuristic(edge.node, goal, satMap);
+            open.add(edge.node);
+          }
+        }
+      }
+      if (g[goal] === Infinity) return { path: [], distance: Infinity };
+      const path = [];
+      let cur = goal;
+      while (cur) { path.unshift(cur); cur = cameFrom[cur]; }
+      return { path, distance: g[goal] };
+    }
+
+    function heuristic(a, b, satMap) {
+      const sa = satMap[a], sb = satMap[b];
+      if (!sa || !sb) return 0;
+      return haversine(sa.lat, sa.lon, sb.lat, sb.lon);
+    }
+
+    // set coordinates button
+    document.getElementById("setCoords").onclick = () => {
+      const aText = document.getElementById("coordA").value.trim();
+      const bText = document.getElementById("coordB").value.trim();
+      if (aText) {
+        const p = aText.split(',').map(x => parseFloat(x.trim()));
+        if (p.length === 2 && !isNaN(p[0]) && !isNaN(p[1])) {
+          nodePositions.A = [p[0], p[1]];
+        } else { alert("Invalid A coordinates. Use: lat, lon"); return; }
+      }
+      if (bText) {
+        const p = bText.split(',').map(x => parseFloat(x.trim()));
+        if (p.length === 2 && !isNaN(p[0]) && !isNaN(p[1])) {
+          nodePositions.B = [p[0], p[1]];
+        } else { alert("Invalid B coordinates. Use: lat, lon"); return; }
+      }
+      localStorage.setItem("nodes", JSON.stringify(nodePositions));
+      updateNodeMarkersFromPositions();
+    };
+
+    // run routing
+    document.getElementById("runRouting").onclick = () => {
+      const enableAlgo = document.getElementById("enableAlgo").checked;
+      if (!enableAlgo) return alert("Enable the algorithm routing first!");
+      if (!satPositions || !satPositions.length) return alert("Load satellites first using the file input.");
+
+      const algo = document.getElementById("algoType").value;
+      const satMap = {};
+      satPositions.forEach(s => satMap[s.name] = s);
+
+      // nearest satellites to A and B (connect ground nodes to nearest satellites)
+      const [latA, lonA] = nodePositions.A;
+      const [latB, lonB] = nodePositions.B;
+      let nearA = null, nearB = null, minA = Infinity, minB = Infinity;
+      satPositions.forEach(s => {
+        const dA = haversine(latA, lonA, s.lat, s.lon);
+        const dB = haversine(latB, lonB, s.lat, s.lon);
+        if (dA < minA) { minA = dA; nearA = s; }
+        if (dB < minB) { minB = dB; nearB = s; }
+      });
+
+      if (!nearA || !nearB) return alert("Could not find nearest satellites to A or B.");
+
+      const graph = buildGraph();
+
+      let result;
+      if (algo === "dijkstra") result = dijkstra(graph, nearA.name, nearB.name);
+      else result = aStar(graph, nearA.name, nearB.name, satMap);
+
+      if (!result || result.distance === Infinity || !result.path.length) {
+        alert("No path found between nearest satellites with current ISL range. Try increasing ISL range in code or use different nodes.");
+        document.querySelector("#routingReport tbody").innerHTML = <tr><td>${algo}</td><td>-</td><td>-</td><td>-</td></tr>;
+        if (routingLine) { map.removeLayer(routingLine); routingLine = null; }
+        return;
+      }
+
+      // total distance includes ground->sat nearest hops
+      const totalDist = result.distance + minA + minB;
+      const latency = (totalDist / c) * 1000 + totalExtraLatency; // include added slider delays here
+
+      // Draw path (include ground->nearest satellite segments visually)
+      if (routingLine) map.removeLayer(routingLine);
+      const pathCoords = [];
+      // A -> nearA
+      pathCoords.push([nodePositions.A[0], nodePositions.A[1]]);
+      pathCoords.push([nearA.lat, nearA.lon]);
+      // satellites in path
+      result.path.forEach(n => pathCoords.push([satMap[n].lat, satMap[n].lon]));
+      // nearB -> B
+      pathCoords.push([nearB.lat, nearB.lon]);
+      pathCoords.push([nodePositions.B[0], nodePositions.B[1]]);
+      routingLine = L.polyline(pathCoords, { color: "orange", weight: 3 }).addTo(map);
+      map.fitBounds(routingLine.getBounds(), { padding: [30,30] });
+
+      // Update Routing Table
+      document.querySelector("#routingReport tbody").innerHTML =
+        <tr><td>${algo}</td><td>${result.path.join(" → ")}</td><td>${totalDist.toFixed(2)}</td><td>${latency.toFixed(3)} ms</td></tr>;
+    };
+
+    // enable latency switch controls the direct A-B calculation update on drag
+    let latencyEnabled = false;
+    document.getElementById("latencySwitch").onchange = (e) => {
+      latencyEnabled = e.target.checked;
+      if (latencyEnabled) calculateNodeLatencyLive();
+    };
+
+    // initial annotate/apply
+    setTimeout(() => {
+      annotateLatencyTables();
+      computeExtraLatency();
+      updateNodeMarkersFromPositions();
+    }, 100);
+
+  </script>
+</body>
+</html>

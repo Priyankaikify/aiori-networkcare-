@@ -1,0 +1,789 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>LEO Satellite Tracker + Ground Markers + Video Transfer Simulation — Improved</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    html, body { height: 100%; margin: 0; font-family: Arial, sans-serif; }
+    #map { height: 60vh; width: 100%; }
+    #controls { margin: 10px; text-align: center; }
+    table { border-collapse: collapse; width: 90%; margin: 8px auto; }
+    th, td { border: 1px solid #ccc; padding: 4px; text-align: center; font-size:12px; }
+    th { background: #f4f4f4; }
+    button, input[type=checkbox], select, input[type=number] { margin: 4px; padding: 6px 8px; }
+    .section-title { text-align: center; font-weight: bold; margin-top: 12px; }
+    #transferUI { margin-top:8px; display:flex; gap:12px; justify-content:center; align-items:center; flex-wrap:wrap;}
+    #nodeBVideo { max-width:360px; display:block; margin:8px auto; background:#000; }
+    #log { width:90%; margin:6px auto; font-size:12px; white-space:pre-wrap; background:#f7f7f7;padding:8px;border-radius:6px; max-height:120px; overflow:auto;}
+  </style>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/satellite.js/dist/satellite.min.js"></script>
+</head>
+<body>
+  <div id="map"></div>
+
+  <div id="controls">
+    <button id="clearMarkers">🧹 Clear Markers</button>
+    <input type="file" id="tleFile" accept=".txt" />
+    <button id="fetchSatellites">🛰 Load Local TLE</button>
+    <button id="toggleSatellites">👁 Toggle Satellites</button>
+    <button id="downloadCsv">⬇ Download CSV</button>
+    <label><input type="checkbox" id="latencySwitch"> ⚡ Enable Latency Calculation</label>
+
+    <div style="margin-top:8px;">
+      <label>🕒 Time Offset (seconds): 
+        <input type="number" id="timeOffset" value="0" min="-600" max="600" step="1" style="width:70px;">
+      </label>
+    </div>
+
+    <p id="status">Status: Ready.</p>
+
+    <!-- Transfer UI -->
+    <div id="transferUI">
+      <label>Video: <input type="file" accept="video/*" id="videoFile"></label>
+      <label>Algorithm:
+        <select id="algorithm">
+          <option>Dijkstra</option>
+          <option>A*</option>
+          <option>TDG (map to Dijkstra)</option>
+          <option>DTEG (map to Dijkstra)</option>
+          <option>CGS (map to Dijkstra)</option>
+          <option>DTN (store &amp; forward)</option>
+          <option>Time-Dependent Dijkstra (TDD)</option>
+          <option>CGR (Contact Graph Routing)</option>
+        </select>
+      </label>
+      <label>Per-hop proc delay (ms): <input type="number" id="procDelay" value="10" step="1" style="width:70px;"></label>
+      <label>Bandwidth (Mbps): <input type="number" id="bandwidth" value="5" step="0.1" style="width:80px;"></label>
+      <label>ISL threshold (km): <input type="number" id="islThresh" value="1500" step="100" style="width:90px;"></label>
+      <button id="startTransfer">▶ Start Transfer</button>
+    </div>
+
+    <div id="timeBox" style="text-align:center; margin:10px; font-weight:bold; font-size:14px;">
+      <span id="utcTime"></span> | <span id="istTime"></span>
+    </div>
+
+    <div id="log">Log: ready.</div>
+  </div>
+
+  <table id="satTable">
+    <thead>
+      <tr><th>#</th><th>Name</th><th>Latitude</th><th>Longitude</th><th>Altitude (km)</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <h3 class="section-title">📡 Table 1: Overall Instantaneous Latency (All Satellites &amp; Ground Points)</h3>
+  <table id="overallLatency">
+    <thead><tr><th>Satellite Name</th><th>Nearest Ground Station</th><th>Distance (km)</th><th>Latency (ms)</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <h3 class="section-title">🛰 Table 2: Inter-Nodal (A ↔ B) Latency</h3>
+  <table id="nodeLatency">
+    <thead><tr><th>Node A</th><th>Node B</th><th>Distance (km)</th><th>Latency (ms)</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <h3 class="section-title">🌍 Table 3: Ground ↔ Satellite Latency Summary</h3>
+  <table id="groundSatSummary">
+    <thead><tr><th>Ground Station</th><th>Nearest Satellite</th><th>Distance (km)</th><th>Latency (ms)</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <video id="nodeBVideo" controls></video>
+
+  <script>
+    // ---------- Utilities & Constants ----------
+    const c = 299792.458; // km/s
+    function toRad(d){ return d * Math.PI / 180; }
+    function toDeg(r){ return r * 180 / Math.PI; }
+    function normLon(lon){ return ((lon + 180) % 360 + 360) % 360 - 180; }
+    function centralAngleRad(lat1, lon1, lat2, lon2){
+      const φ1 = toRad(lat1), φ2 = toRad(lat2);
+      const Δλ = toRad(normLon(lon2 - lon1));
+      const Δφ = toRad(lat2 - lat1);
+      const a = Math.sin(Δφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2;
+      return 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+    function trueSpaceDistanceKm(lat1, lon1, alt1, lat2, lon2, alt2) {
+      const R1 = 6371 + (alt1 || 0);
+      const R2 = 6371 + (alt2 || 0);
+      const δ = centralAngleRad(lat1, lon1, lat2, lon2);
+      return Math.sqrt(R1*2 + R2*2 - 2 * R1 * R2 * Math.cos(δ));
+    }
+
+    // ---------- Time updater (UTC + IST fixed) ----------
+    function updateTimes() {
+  const now = new Date();
+  const utcDate = now.toISOString().slice(0, 10);
+  const utcTime = now.toISOString().slice(11, 19);
+  const ist = new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
+  const istDate = ist.toISOString().slice(0, 10);
+  const istTime = ist.toISOString().slice(11, 19);
+  document.getElementById("utcTime").textContent = `🌐 UTC: ${utcDate} ${utcTime}`;
+
+  document.getElementById("istTime").textContent = `🇮🇳 IST: ${istDate} ${istTime}`;
+
+}
+updateTimes();
+setInterval(updateTimes, 1000);
+
+
+    // ---------- Map & Layers ----------
+    const map = L.map("map").setView([10, 10], 2);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 8, attribution: "&copy; OpenStreetMap" }).addTo(map);
+    const groundLayer = L.layerGroup().addTo(map);
+    const satelliteLayer = L.layerGroup().addTo(map);
+    const stationsLayer = L.layerGroup().addTo(map);
+    let satellitesVisible = true;
+    let latencyEnabled = false;
+    let lastLoadedTLE = "";
+
+    // ---------- Markers A & B ----------
+    const markerOptions = { draggable: true, riseOnHover: true,
+      icon: L.divIcon({ html: '<div style="width:12px;height:12px;border-radius:50%;background:#00c3ff;border:2px solid white;box-shadow:0 0 6px #00fff2;"></div>', className: "" })
+    };
+    const markerA = L.marker([10, 0], markerOptions).addTo(map).bindTooltip("A", { permanent: true, direction: "top" });
+    const markerB = L.marker([40, 60], markerOptions).addTo(map).bindTooltip("B", { permanent: true, direction: "top" });
+    markerA.on("drag", ()=>{ keepMarkerInside(markerA); updatePath(); });
+    markerB.on("drag", ()=>{ keepMarkerInside(markerB); updatePath(); });
+
+    function keepMarkerInside(m){
+      const p = m.getLatLng();
+      if (p.lat > 85) p.lat = 85; if (p.lat < -85) p.lat = -85;
+      if (p.lng > 180) p.lng -= 360; if (p.lng < -180) p.lng += 360;
+      m.setLatLng(p);
+    }
+
+    let pathLine = null;
+    function updatePath(){
+      keepMarkerInside(markerA); keepMarkerInside(markerB);
+      const a = markerA.getLatLng(), b = markerB.getLatLng();
+      const pts = [];
+      for (let i = 0; i <= 256; i++){
+        const f = i / 256;
+        const φ1 = toRad(a.lat), λ1 = toRad(a.lng), φ2 = toRad(b.lat), λ2 = toRad(b.lng);
+        const δ = centralAngleRad(a.lat, a.lng, b.lat, b.lng);
+        const A = Math.sin((1 - f) * δ) / Math.sin(δ);
+        const B = Math.sin(f * δ) / Math.sin(δ);
+        const x = A*Math.cos(φ1)*Math.cos(λ1)+B*Math.cos(φ2)*Math.cos(λ2);
+        const y = A*Math.cos(φ1)*Math.sin(λ1)+B*Math.cos(φ2)*Math.sin(λ2);
+        const z = A*Math.sin(φ1)+B*Math.sin(φ2);
+        pts.push([toDeg(Math.atan2(z, Math.sqrt(x*x+y*y))), toDeg(Math.atan2(y,x))]);
+      }
+      if (pathLine) map.removeLayer(pathLine);
+      pathLine = L.polyline(pts, { color: "#000", weight: 2.5 }).addTo(map);
+      if (latencyEnabled) calculateNodeLatency(markerA.getLatLng(), markerB.getLatLng());
+    }
+    updatePath();
+
+    // ---------- UI Hooks ----------
+    document.getElementById("latencySwitch").onchange = e=>{
+      latencyEnabled = e.target.checked;
+      if (latencyEnabled) calculateNodeLatency(markerA.getLatLng(), markerB.getLatLng());
+    };
+    document.getElementById("clearMarkers").onclick = ()=>groundLayer.clearLayers();
+    document.getElementById("toggleSatellites").onclick = ()=>{ satellitesVisible=!satellitesVisible; if(satellitesVisible) satelliteLayer.addTo(map); else map.removeLayer(satelliteLayer); };
+
+    // ---------- Stations ----------
+    const stations=[
+      {name:"North Bend, WA",lat:47.482,lng:-121.761},
+      {name:"Conrad, MT",lat:48.118,lng:-111.979},
+      {name:"Elwood, NE",lat:40.856,lng:-99.967},
+      {name:"Merrillan, WI",lat:44.385,lng:-90.793},
+      {name:"Hawthorne, CA",lat:33.921,lng:-118.327},
+      {name:"Marathon, ON",lat:49.33,lng:-86.208},
+      {name:"St Johns, NL",lat:47.53,lng:-52.793},
+      {name:"Akita, Japan",lat:39.718,lng:140.088},
+      {name:"Angeles, Philippines",lat:15.15,lng:120.59},
+      {name:"Cabo San Lucas, Mexico",lat:22.89,lng:-109.84}
+    ];
+    stations.forEach(s=>L.circleMarker([s.lat,s.lng],{radius:5,color:"red",fillColor:"red",fillOpacity:1}).addTo(stationsLayer));
+
+    // Make satPositions global so transfer code can access
+    window.satPositions = [];
+
+    // ---------- smooth sat update timer handle ----------
+    let satUpdateTimer = null;
+
+    // ---------- Satellite loader (refactored) ----------
+    async function fetchSatellitesHandler(){
+      const fileInput=document.getElementById("tleFile");
+      const status=document.getElementById("status");
+      const tableBody=document.querySelector("#satTable tbody");
+      const latencyTable=document.querySelector("#overallLatency tbody");
+      const groundSatSummary=document.querySelector("#groundSatSummary tbody");
+      tableBody.innerHTML=""; latencyTable.innerHTML=""; groundSatSummary.innerHTML="";
+      satelliteLayer.clearLayers();
+      window.satPositions = [];
+      if(!fileInput.files.length && !lastLoadedTLE){ status.textContent="Please select a TLE file first or use synthetic."; return; }
+
+      status.textContent="Reading local file...";
+      const text = fileInput.files.length ? await fileInput.files[0].text() : lastLoadedTLE;
+      lastLoadedTLE = text;
+
+      const lines=text.trim().split(/\r?\n/);
+      const offsetSecs=parseFloat(document.getElementById("timeOffset").value)||0;
+      const now=new Date(Date.now()+offsetSecs*1000);
+      let count=0; const maxSatellites=200; // allow more for richer graphs
+      for(let i=0;i<lines.length;i+=3){
+        if(count>=maxSatellites) break;
+        const name=lines[i].trim(), l1=lines[i+1]?.trim(), l2=lines[i+2]?.trim();
+        if(!l1||!l2) continue;
+        try{
+          const satrec=window.satellite.twoline2satrec(l1,l2);
+          const pv=window.satellite.propagate(satrec,now);
+          if(!pv.position) continue;
+          const gmst=window.satellite.gstime(now);
+          const geo=window.satellite.eciToGeodetic(pv.position,gmst);
+          const lat=window.satellite.degreesLat(geo.latitude);
+          const lon=window.satellite.degreesLong(geo.longitude);
+          const alt=geo.height;
+          const marker = L.circleMarker([lat,lon],{radius:3,color:"darkgreen",fillColor:"darkgreen",fillOpacity:1}).addTo(satelliteLayer);
+          window.satPositions.push({name,lat,lon,alt,marker});
+          tableBody.insertAdjacentHTML("beforeend",'<tr><td>${count+1}</td><td>${name}</td><td>${lat.toFixed(2)}</td><td>${lon.toFixed(2)}</td><td>${alt.toFixed(2)}</td></tr>');
+          count++;
+        }catch(e){ continue; }
+      }
+      if(window.satPositions.length===0){
+        status.textContent="No valid TLEs found — using synthetic constellation (8 sats).";
+        window.satPositions = [];
+        const ringLat = [ 0, 10, 20, 30, 40, -10, -20, -30 ];
+        for(let i=0;i<ringLat.length;i++){
+          const lon = i*45;
+          const alt = 550; // km
+          const name = "SYN-"+i;
+          const marker = L.circleMarker([ringLat[i],lon],{radius:3,color:"darkgreen",fillColor:"darkgreen",fillOpacity:1}).addTo(satelliteLayer);
+          window.satPositions.push({name,lat:ringLat[i],lon,alt,marker});
+          tableBody.insertAdjacentHTML("beforeend",'<tr><td>${i+1}</td><td>${name}</td><td>${ringLat[i].toFixed(2)}</td><td>${lon.toFixed(2)}</td><td>${alt.toFixed(2)}</td></tr>');
+        }
+      } else {
+        status.textContent = `Loaded ${window.satPositions.length} satellites. (Offset ${offsetSecs} sec)`;
+
+      }
+      computeOverallLatency(window.satPositions, document.querySelector("#overallLatency tbody"), document.querySelector("#groundSatSummary tbody"));
+
+      // ---------------------------
+      // Smooth satellite updates loop (uses the lastLoadedTLE)
+      // ---------------------------
+      // Clear any previous interval
+      if (satUpdateTimer) {
+        clearInterval(satUpdateTimer);
+        satUpdateTimer = null;
+      }
+
+      // build satrecs from lastLoadedTLE if available
+      const tleText = lastLoadedTLE || "";
+      const tleLines = tleText.trim().split(/\r?\n/).filter(l => l.trim().length > 0);
+      const satrecs = [];
+      for (let i = 0; i < tleLines.length; i += 3) {
+        const name = tleLines[i]?.trim();
+        const l1 = tleLines[i+1]?.trim();
+        const l2 = tleLines[i+2]?.trim();
+        if (!l1 || !l2) continue;
+        try {
+          const rec = satellite.twoline2satrec(l1, l2);
+          satrecs.push({ name, rec });
+        } catch (e) {
+          // ignore invalid
+        }
+      }
+
+      // If we have TLEs and markers, update positions every second
+      if (satrecs.length > 0 && window.satPositions.length > 0) {
+        satUpdateTimer = setInterval(() => {
+          const now2 = new Date();
+          const gmst2 = satellite.gstime(now2);
+          // Update as many markers as both arrays have (order is the same as created above)
+          const n = Math.min(satrecs.length, window.satPositions.length);
+          for (let k = 0; k < n; k++) {
+            try {
+              const pv2 = satellite.propagate(satrecs[k].rec, now2);
+              if (!pv2.position) continue;
+              const geo2 = satellite.eciToGeodetic(pv2.position, gmst2);
+              const lat2 = satellite.degreesLat(geo2.latitude);
+              const lon2 = satellite.degreesLong(geo2.longitude);
+              const alt2 = geo2.height;
+              const satObj = window.satPositions[k];
+              satObj.lat = lat2;
+              satObj.lon = lon2;
+              satObj.alt = alt2;
+              if (satObj.marker) satObj.marker.setLatLng([lat2, lon2]);
+            } catch (e) {
+              // ignore single sat errors
+            }
+          }
+        }, 1000); // update every 1s
+      }
+    }
+
+    document.getElementById("fetchSatellites").addEventListener('click', fetchSatellitesHandler);
+    // re-fetch when time offset changed (debounce)
+    let timeOffsetTimer = null;
+    document.getElementById("timeOffset").addEventListener('input', ()=>{
+      clearTimeout(timeOffsetTimer);
+      timeOffsetTimer = setTimeout(()=>{ fetchSatellitesHandler(); }, 400);
+    });
+
+    document.getElementById("downloadCsv").onclick=()=>{
+      const rows=[["#","Name","Latitude","Longitude","Altitude (km)"]];
+      document.querySelectorAll("#satTable tbody tr").forEach(tr=>rows.push([...tr.children].map(td=>td.textContent)));
+      const csv=rows.map(r=>r.join(",")).join("\n");
+      const a=document.createElement("a");
+      a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
+      a.download="satellites.csv"; a.click();
+    };
+
+    // ---------- Latency & Node calculations ----------
+    function computeOverallLatency(satPositions,latencyTable,groundSatSummary){
+      latencyTable.innerHTML=""; groundSatSummary.innerHTML="";
+      stations.forEach(st=>{
+        let nearestSat=null,minDist=Infinity;
+        satPositions.forEach(sat=>{
+          const d=trueSpaceDistanceKm(st.lat,st.lng,0,sat.lat,sat.lon,sat.alt);
+          if(d<minDist){minDist=d;nearestSat=sat;}
+        });
+        const latencyMs=(minDist/c)*1000;
+        groundSatSummary.insertAdjacentHTML("beforeend", `
+  <tr>
+    <td>${st.name}</td>
+    <td>${nearestSat ? nearestSat.name : '—'}</td>
+    <td>${minDist.toFixed(2)}</td>
+    <td>${latencyMs.toFixed(3)}</td>
+  </tr>
+`);
+      });
+      satPositions.forEach(sat=>{
+        let nearestGround=null,minDist=Infinity;
+        stations.forEach(st=>{
+          const d=trueSpaceDistanceKm(sat.lat,sat.lon,sat.alt,st.lat,st.lng,0);
+          if(d<minDist){minDist=d;nearestGround=st;}
+        });
+        const latencyMs=(minDist/c)*1000;
+        latencyTable.insertAdjacentHTML("beforeend", `
+  <tr>
+    <td>${sat.name}</td>
+    <td>${nearestGround ? nearestGround.name : '—'}</td>
+    <td>${minDist.toFixed(2)}</td>
+    <td>${latencyMs.toFixed(3)}</td>
+  </tr>
+`);
+      });
+    }
+
+    function calculateNodeLatency(a,b){
+      const d=trueSpaceDistanceKm(a.lat,a.lng??a.lon,0,b.lat,b.lng??b.lon,0);
+      const latencyMs=(d/c)*1000;
+      document.querySelector("#nodeLatency tbody").innerHTML = `
+  <tr>
+    <td>A</td>
+    <td>B</td>
+    <td>${d.toFixed(2)}</td>
+    <td>${latencyMs.toFixed(3)}</td>
+  </tr>
+`;
+    }
+
+    // ---------- Graph & Routing ----------
+    function buildGraph(islThreshKm){
+      const nodes = [];
+      let id = 0;
+      function addNode(obj){ obj.id = id++; nodes.push(obj); return obj.id; }
+      const Apos = markerA.getLatLng(), Bpos = markerB.getLatLng();
+      const nodeAId = addNode({type:"groundNode",name:"A",lat:Apos.lat,lon:Apos.lng,alt:0});
+      const nodeBId = addNode({type:"groundNode",name:"B",lat:Bpos.lat,lon:Bpos.lng,alt:0});
+      stations.forEach(s=>addNode({type:"station",name:s.name,lat:s.lat,lon:s.lng,alt:0}));
+      window.satPositions.forEach(s=>addNode({type:"sat",name:s.name,lat:s.lat,lon:s.lon,alt:s.alt}));
+
+      const edges = [];
+      function addEdge(u,v){
+        const nu = nodes[u], nv = nodes[v];
+        const d = trueSpaceDistanceKm(nu.lat, nu.lon, nu.alt||0, nv.lat, nv.lon, nv.alt||0);
+        const propMs = (d / c) * 1000;
+        edges.push({u,v,distKm:d,propMs});
+      }
+
+      for(let i=0;i<nodes.length;i++){
+        for(let j=i+1;j<nodes.length;j++){
+          const ni = nodes[i], nj = nodes[j];
+          if(ni.type==="sat" && nj.type==="sat"){
+            const d = trueSpaceDistanceKm(ni.lat,ni.lon,ni.alt, nj.lat,nj.lon,nj.alt);
+            if(d <= islThreshKm) { addEdge(i,j); addEdge(j,i); }
+          }
+          if((ni.type==="sat" && (nj.type==="station" || nj.type==="groundNode")) || (nj.type==="sat" && (ni.type==="station" || ni.type==="groundNode"))){
+            const sat = ni.type==="sat" ? ni : nj;
+            const ground = ni.type!=="sat" ? ni : nj;
+            const d = trueSpaceDistanceKm(sat.lat,sat.lon,sat.alt, ground.lat,ground.lon,ground.alt||0);
+            if(d <= Math.max(islThreshKm*2, 3000)){
+              addEdge(i,j); addEdge(j,i);
+            }
+          }
+        }
+      }
+      return {nodes, edges, nodeAId, nodeBId};
+    }
+
+    function dijkstra(graph, sourceId, targetId, procMs){
+      const {nodes, edges} = graph;
+      const adj = Array(nodes.length).fill(0).map(()=>[]);
+      edges.forEach(e=>adj[e.u].push(e));
+      const dist = Array(nodes.length).fill(Infinity);
+      const prev = Array(nodes.length).fill(null);
+      dist[sourceId] = 0;
+      const visited = new Set();
+      while(true){
+        let u=-1, best=Infinity;
+        for(let i=0;i<nodes.length;i++) if(!visited.has(i) && dist[i] < best){ best=dist[i]; u=i; }
+        if(u===-1) break;
+        if(u === targetId) break;
+        visited.add(u);
+        for(const e of adj[u]){
+          const alt = dist[u] + e.propMs + procMs;
+          if(alt < dist[e.v]){ dist[e.v]=alt; prev[e.v]=u; }
+        }
+      }
+      if(dist[targetId]===Infinity) return null;
+      const path = []; let cur=targetId; while(cur!=null){ path.push(cur); cur = prev[cur]; }
+      path.reverse();
+      return {path, totalMs: dist[targetId]};
+    }
+
+    function aStar(graph, sourceId, targetId, procMs){
+      const {nodes, edges} = graph;
+      const adj = Array(nodes.length).fill(0).map(()=>[]);
+      edges.forEach(e=>adj[e.u].push(e));
+      function heuristic(i){
+        const a = nodes[i], b = nodes[targetId];
+        const d = trueSpaceDistanceKm(a.lat,a.lon,a.alt||0,b.lat,b.lon,b.alt||0);
+        return (d/c)*1000;
+      }
+      const open = new Set([sourceId]);
+      const g = Array(nodes.length).fill(Infinity);
+      const f = Array(nodes.length).fill(Infinity);
+      const prev = Array(nodes.length).fill(null);
+      g[sourceId]=0; f[sourceId]=heuristic(sourceId);
+      while(open.size){
+        let u=null, best=Infinity;
+        for(const n of open) if(f[n] < best){ best=f[n]; u=n; }
+        if(u===null) break;
+        if(u===targetId) break;
+        open.delete(u);
+        for(const e of adj[u]){
+          const tentative = g[u] + e.propMs + procMs;
+          if(tentative < g[e.v]){
+            prev[e.v]=u; g[e.v]=tentative; f[e.v]=g[e.v] + heuristic(e.v);
+            open.add(e.v);
+          }
+        }
+      }
+      if(g[targetId]===Infinity) return null;
+      const path=[]; let cur=targetId; while(cur!=null){ path.push(cur); cur=prev[cur]; } path.reverse();
+      return {path, totalMs: g[targetId]};
+    }
+
+    // ---------- Realistic additional routing strategies (TDG, DTEG, CGS, DTN) ----------
+    // TDG: topology-driven — prefer stable, low-latency edges (filter out high-prop edges)
+    function tdgRouting(graph, sourceId, targetId, procMs) {
+      // stability threshold (ms) — edges with propMs above this are considered unstable
+      const stabilityThresholdMs = 80; // tuneable
+      const stableEdges = graph.edges.filter(e => e.propMs <= stabilityThresholdMs);
+      // If stableEdges produce disconnected graph, fall back to full graph
+      const attempt = dijkstra({nodes: graph.nodes, edges: stableEdges}, sourceId, targetId, procMs);
+      if(attempt) return attempt;
+      return dijkstra(graph, sourceId, targetId, procMs);
+    }
+
+    // DTEG: dynamic topology — simulate short-term fluctuations and recompute
+    function dtegRouting(graph, sourceId, targetId, procMs) {
+      // create a lightly perturbed copy of edges to mimic movement / real-time changes
+      const perturbedEdges = graph.edges.map(e => {
+        // ±0-15% jitter
+        const jitterFactor = 1 + ((Math.random() - 0.5) * 0.15);
+        return {...e, propMs: e.propMs * jitterFactor};
+      });
+      // use dijkstra on perturbed graph
+      const attempt = dijkstra({nodes: graph.nodes, edges: perturbedEdges}, sourceId, targetId, procMs);
+      // optionally, if attempt exists, also compute second pass with inverse jitter and pick lower cost path
+      const perturbedEdges2 = graph.edges.map(e => {
+        const jitterFactor = 1 + ((Math.random() - 0.5) * 0.15);
+        return {...e, propMs: e.propMs * jitterFactor};
+      });
+      const attempt2 = dijkstra({nodes: graph.nodes, edges: perturbedEdges2}, sourceId, targetId, procMs);
+      if(!attempt) return attempt2;
+      if(!attempt2) return attempt;
+      return (attempt.totalMs <= attempt2.totalMs) ? attempt : attempt2;
+    }
+
+    // CGS: congestion-aware — add dynamic congestion penalty to busy edges
+    function cgsRouting(graph, sourceId, targetId, procMs) {
+      // build a pseudo-congestion factor per edge: edges closer to ground nodes or with many neighbors get more congested
+      // compute node degree
+      const degree = Array(graph.nodes.length).fill(0);
+      graph.edges.forEach(e => { degree[e.u]++; degree[e.v]++; });
+      const congestedEdges = graph.edges.map(e => {
+        // base congestion derived from endpoint degrees and random short-term noise
+        const degFactor = (degree[e.u] + degree[e.v]) / 2;
+        // scale: low degree -> small penalty, high degree -> larger penalty
+        const penaltyMs = Math.min(100, degFactor * 2 + (Math.random() * 30)); // up to ~100 ms
+        return {...e, propMs: e.propMs + penaltyMs};
+      });
+      return dijkstra({nodes: graph.nodes, edges: congestedEdges}, sourceId, targetId, procMs);
+    }
+
+    // DTN: store-and-forward — message based, link intermittency and per-hop queuing delay
+    function dtnRouting(graph, sourceId, targetId, procMs) {
+      // We simulate DTN by adding variable per-hop waiting (link intermittency) + store delay
+      const base = dijkstra(graph, sourceId, targetId, procMs);
+      if(!base) return null;
+      // For each hop, add a stochastic "contact wait" (0-2000 ms) and a store-process delay
+      let extra = 0;
+      for(let i=0;i<base.path.length-1;i++){
+        // probability of a contact being immediately available
+        const pImmediate = 0.5; // 50% chance link is immediately available
+        if(Math.random() > pImmediate) {
+          // if not immediate, random wait between 200ms and 2000ms
+          extra += 200 + Math.random() * 1800;
+        } else {
+          // small delay for immediate contact
+          extra += 20 + Math.random() * 80;
+        }
+        // store-and-forward processing (e.g., writing to buffer) add a fixed small cost
+        extra += 50; // 50 ms store/processing
+      }
+      return {path: base.path, totalMs: base.totalMs + extra};
+    }
+
+    // ---------- Time-Dependent Dijkstra (simplified / browser-friendly) ----------
+    function timeDependentDijkstra(graph, sourceId, targetId, procMs) {
+      // simplified time model: each edge gets an availability window (start, end) relative to now
+      // windows are generated deterministically from edge indices so repeated calls are stable-ish
+      const { nodes, edges } = graph;
+      const adj = Array(nodes.length).fill(0).map(()=>[]);
+      const baseNow = performance.now();
+      // generate windows deterministically (but pseudo-random) so results vary across edges
+      for (let i=0;i<edges.length;i++){
+        const e = edges[i];
+        const slot = (i % 6); // distribute windows across 6 offsets
+        const start = baseNow + slot * 4000 + ((i*31)%3000); // staggered starts
+        const duration = 8000 + ((i*17)%12000); // 8–20s
+        e.availableFrom = start;
+        e.availableTo = start + duration;
+        adj[e.u].push(e);
+      }
+
+      // arrival time measured in ms from baseNow
+      const arrival = Array(nodes.length).fill(Infinity);
+      const prev = Array(nodes.length).fill(null);
+      arrival[sourceId] = baseNow;
+
+      const visited = new Set();
+      while (true) {
+        let u=-1, best=Infinity;
+        for (let i=0;i<nodes.length;i++) if(!visited.has(i) && arrival[i] < best){ best = arrival[i]; u = i; }
+        if(u===-1 || u===targetId) break;
+        visited.add(u);
+        for(const e of adj[u]){
+          const depart = Math.max(arrival[u], e.availableFrom);
+          if (depart > e.availableTo) continue; // missed this contact window
+          const arriveTime = depart + e.propMs + procMs;
+          if (arriveTime < arrival[e.v]){
+            arrival[e.v] = arriveTime;
+            prev[e.v] = u;
+          }
+        }
+      }
+
+      if (arrival[targetId] === Infinity) return null;
+      const path = []; let cur = targetId;
+      while(cur != null){ path.push(cur); cur = prev[cur]; }
+      path.reverse();
+      return { path, totalMs: (arrival[targetId] - baseNow) };
+    }
+
+    // ---------- Contact Graph Routing (CGR) — simplified browser-friendly version ----------
+    function contactGraphRouting(graph, sourceId, targetId, procMs) {
+      // Build a contact schedule per edge: start/end times + propMs
+      // This is a simplified CGR: we precompute contacts and then run earliest-arrival search
+      const { nodes, edges } = graph;
+      const contacts = Array(nodes.length).fill(null).map(()=>[]);
+      const baseNow = performance.now();
+
+      // create contact windows based on edge index
+      for (let i=0;i<edges.length;i++){
+        const e = edges[i];
+        const offsetGroup = i % 5; // 5 groups of contact timing
+        const start = baseNow + offsetGroup * 5000 + ((i*23)%4000);
+        const duration = 10000 + ((i*13)%15000); // 10–25s windows
+        // add contact both directions
+        contacts[e.u].push({ to: e.v, start, end: start + duration, delay: e.propMs });
+      }
+
+      // earliest arrival times (ms)
+      const arrival = Array(nodes.length).fill(Infinity);
+      const prev = Array(nodes.length).fill(null);
+      arrival[sourceId] = baseNow;
+
+      const visited = new Set();
+      while (true) {
+        let u=-1, best=Infinity;
+        for (let i=0;i<nodes.length;i++) if(!visited.has(i) && arrival[i] < best){ best = arrival[i]; u = i; }
+        if(u===-1 || u===targetId) break;
+        visited.add(u);
+        for(const c of contacts[u]){
+          const depart = Math.max(arrival[u], c.start);
+          if (depart > c.end) continue; // missed contact
+          const arriveTime = depart + c.delay + procMs;
+          if (arriveTime < arrival[c.to]){
+            arrival[c.to] = arriveTime;
+            prev[c.to] = u;
+          }
+        }
+      }
+
+      if (arrival[targetId] === Infinity) return null;
+      const path = []; let cur = targetId;
+      while(cur != null){ path.push(cur); cur = prev[cur]; }
+      path.reverse();
+      return { path, totalMs: (arrival[targetId] - baseNow) };
+    }
+
+    // ---------- Map route drawing + packet animation (improved cancellation & cleanup) ----------
+    let packetMarker = null;
+    let currentRouteLine = null;
+    let packetAnimationTimer = null;
+    function drawRouteOnMap(graph, route){
+      if(currentRouteLine) { map.removeLayer(currentRouteLine); currentRouteLine=null; }
+      if(packetMarker) { map.removeLayer(packetMarker); packetMarker=null; }
+      const coords = route.path.map(i=>[graph.nodes[i].lat, graph.nodes[i].lon]);
+      currentRouteLine = L.polyline(coords, {color:"#ff6600",weight:3, dashArray:"6 4"}).addTo(map);
+      packetMarker = L.circleMarker(coords[0],{radius:6,color:"#ff0", fill:true}).addTo(map);
+    }
+
+    function animatePacket(graph, route, travelMs){
+      if(!packetMarker) return;
+      if(packetAnimationTimer) { clearInterval(packetAnimationTimer); packetAnimationTimer = null; }
+      const coords = route.path.map(i=>[graph.nodes[i].lat, graph.nodes[i].lon]);
+      const totalSteps = 200;
+      const stepMs = Math.max(10, Math.round(travelMs / totalSteps));
+      let step = 0;
+      packetAnimationTimer = setInterval(()=>{
+        const t = step / totalSteps;
+        if(t>=1){ const last = coords[coords.length-1]; packetMarker.setLatLng(last); clearInterval(packetAnimationTimer); packetAnimationTimer=null; return; }
+        const totalSegs = coords.length - 1;
+        const segIndex = Math.min(Math.floor(t * totalSegs), Math.max(0,totalSegs-1));
+        const localT = (t*totalSegs) - segIndex;
+        const a = coords[segIndex], b = coords[segIndex+1];
+        const lat = a[0] + (b[0]-a[0])*localT;
+        let lon = a[1] + (b[1]-a[1])*localT;
+        if(lon>180) lon -= 360;
+        packetMarker.setLatLng([lat,lon]);
+        step++;
+      }, stepMs);
+    }
+
+    // ---------- Transfer simulation (no background work left dangling) ----------
+    function simulateTransfer(algorithmName){
+      const videoInput = document.getElementById("videoFile");
+      const logEl = document.getElementById("log");
+      if(!videoInput.files.length){ logEl.textContent = "Select a video file first."; return; }
+      const startBtn = document.getElementById('startTransfer'); startBtn.disabled = true;
+
+      const procMs = parseFloat(document.getElementById("procDelay").value)||10;
+      const bandwidthMbps = parseFloat(document.getElementById("bandwidth").value)||5;
+      const islThresh = parseFloat(document.getElementById("islThresh").value)||1500;
+      const graph = buildGraph(islThresh);
+
+      let routeResult = null;
+
+      // use inclusive matching because the option text contains descriptors (we must not change the UI)
+      const name = (algorithmName||"").toLowerCase();
+
+      if(name === "dijkstra" || (name.includes("dijkstra") && !name.includes("tdg") && !name.includes("dteg") && !name.includes("cgs") && !name.includes("time-dependent"))) {
+        routeResult = dijkstra(graph, graph.nodeAId, graph.nodeBId, procMs);
+      } else if(name.includes("a*") || name.includes("a-star") || name === "a*"){
+        routeResult = aStar(graph, graph.nodeAId, graph.nodeBId, procMs);
+      } else if(name.includes("tdg")){
+        routeResult = tdgRouting(graph, graph.nodeAId, graph.nodeBId, procMs);
+      } else if(name.includes("dteg")){
+        routeResult = dtegRouting(graph, graph.nodeAId, graph.nodeBId, procMs);
+      } else if(name.includes("cgs")){
+        routeResult = cgsRouting(graph, graph.nodeAId, graph.nodeBId, procMs);
+      } else if(name.includes("dtn")){
+        routeResult = dtnRouting(graph, graph.nodeAId, graph.nodeBId, procMs);
+      } else if(name.includes("time-dependent") || name.includes("tdd")){
+        routeResult = timeDependentDijkstra(graph, graph.nodeAId, graph.nodeBId, procMs);
+      } else if(name.includes("cgr")){
+        routeResult = contactGraphRouting(graph, graph.nodeAId, graph.nodeBId, procMs);
+      } else {
+        // fallback to dijkstra
+        routeResult = dijkstra(graph, graph.nodeAId, graph.nodeBId, procMs);
+      }
+
+      if(!routeResult){ logEl.textContent = "No path found with current graph/thresholds."; startBtn.disabled=false; return; }
+      drawRouteOnMap(graph, routeResult);
+      const totalPropMs = routeResult.totalMs;
+      const nodes = graph.nodes;
+      const perHop = [];
+      for(let i=0;i<routeResult.path.length-1;i++){
+        const u=nodes[routeResult.path[i]], v=nodes[routeResult.path[i+1]];
+        const d = trueSpaceDistanceKm(u.lat,u.lon,u.alt||0, v.lat,v.lon,v.alt||0);
+        perHop.push({from:u.name, to:v.name, distKm:d, propMs:(d/c)*1000});
+      }
+      let s = `Algorithm: ${algorithmName}\nTotal propagation + proc (ms): ${totalPropMs.toFixed(3)}\nHops: ${perHop.length}`;
+      perHop.forEach((h,i)=> s += ` ${i+1}. ${h.from} -> ${h.to} : ${h.distKm.toFixed(2)} km, ${h.propMs.toFixed(3)} ms\n`);
+      logEl.textContent = s;
+
+      // chunked transfer
+      const file = videoInput.files[0];
+      const chunkBytes = 64*1024; // 64 KiB
+      const fileSize = file.size;
+      const numChunks = Math.ceil(fileSize / chunkBytes);
+      const bytesPerSec = (bandwidthMbps * 1e6) / 8;
+      const chunkTimeMs = (chunkBytes / bytesPerSec) * 1000;
+      const initialDelayMs = totalPropMs;
+      const receivedParts = [];
+      const progressEl = document.getElementById("status");
+      progressEl.textContent = `Starting transfer: ${file.name} (${(fileSize / 1e6).toFixed(2)} MB), chunks=${numChunks}, bw=${bandwidthMbps} Mbps`;
+      // visual animation time scaled
+      animatePacket(graph, routeResult, Math.max(500, initialDelayMs + chunkTimeMs*5));
+
+      let receivedCount = 0;
+      const startTime = performance.now();
+      // schedule chunk "arrivals" using setTimeout; keep references to clear if needed
+      for(let i=0;i<numChunks;i++){
+        const startByte = i*chunkBytes;
+        const endByte = Math.min(fileSize, (i+1)*chunkBytes);
+        const slice = file.slice(startByte, endByte);
+        const arrivalMs = Math.max(0, initialDelayMs + i*chunkTimeMs);
+        setTimeout(async (idx, sl) => {
+          const arr = await sl.arrayBuffer();
+          receivedParts[idx] = new Uint8Array(arr);
+          receivedCount++;
+          progressEl.textContent = `Receiving... ${receivedCount}/${numChunks} chunks (${((receivedCount / numChunks) * 100).toFixed(1)}%)`;
+          if(receivedCount === numChunks){
+            const totalTime = performance.now() - startTime;
+            progressEl.textContent = `Transfer complete in ${(totalTime / 1000).toFixed(3)} s (simulated). Final E2E latency ~ ${initialDelayMs.toFixed(3)} ms.`;
+            const blob = new Blob(receivedParts, {type: file.type});
+            const url = URL.createObjectURL(blob);
+            const vid = document.getElementById("nodeBVideo");
+            vid.src = url;
+            vid.play().catch(()=>{});
+            animatePacket(graph, routeResult, 500);
+            startBtn.disabled=false;
+          }
+        }, arrivalMs, i, slice);
+      }
+    }
+
+    document.getElementById("startTransfer").onclick = ()=>{ const alg = document.getElementById("algorithm").value; simulateTransfer(alg); };
+
+    // small UI logging helper
+    map.on("click",e=>{ L.circleMarker(e.latlng,{radius:4,color:"blue",fillColor:"blue",fillOpacity:0.8}).addTo(groundLayer); });
+  </script>
+</body>
+</html>
